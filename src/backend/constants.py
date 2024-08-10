@@ -1,0 +1,1 @@
+MAX_TIMER_LIMIT = 10

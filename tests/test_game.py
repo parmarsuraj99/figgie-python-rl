@@ -2,65 +2,91 @@ import asyncio
 
 import pytest
 
-from src.backend.game import Game, Player
+from src.backend.game import app, Game, Player, GameState, Constants
 
 
 @pytest.fixture(scope="session")
-def game():
-    return Game(game_id="test_game")
+def make_game():
+    game = Game(game_id="test_game")
+    return game
 
 
-def test_game_initialization(game):
-    assert game.game_id == "test_game"
-    assert not game.started
-    assert game.countdown == 300
-    assert game.players == []
+@pytest.fixture(scope="session")
+def add_players():
+    game = Game(game_id="test_game")
+    player_1 = Player(player_id="player_1")
+    player_2 = Player(player_id="player_2")
+    player_3 = Player(player_id="player_3")
+    player_4 = Player(player_id="player_4")
+    player_5 = Player(player_id="player_5")
+    game.add_player(player_1.player_id)
+    game.add_player(player_2.player_id)
+    game.add_player(player_3.player_id)
+    game.add_player(player_4.player_id)
+    game.add_player(player_5.player_id)
+    return game
 
 
-def test_add_player(game):
-    player = Player(player_id="player1")
-    game.add_player(player)
+def test_game_initial_state(make_game):
+    game = make_game
+    assert game.state.started is False
+    assert game.state.countdown == Constants.timer_countdown
+
+
+def test_make_player():
+    player_1 = Player(player_id="player_1")
+    assert player_1.player_id == "player_1"
+    assert player_1.ready is False
+
+
+def test_add_player(make_game):
+    game = make_game
+    player_1 = Player(player_id="player_1")
+    game.add_player(player_1.player_id)
     assert len(game.players) == 1
-    assert game.players[0].player_id == "player1"
+    assert "player_1" in game.players
 
 
-def test_remove_player(game):
-    assert len(game.players) == 1
-    game.remove_player("player1")
+def test_remove_player(make_game):
+    game = make_game
+    game.add_player("player_1")
+    game.remove_player("player_1")
     assert len(game.players) == 0
+    assert "player_1" not in game.players
 
 
-def test_add_multiple_players(game):
-    players = [Player(player_id=f"player{i}") for i in range(0, 4)]
-    for player in players:
-        game.add_player(player)
-    assert len(game.players) == 4
-    assert [p.player_id for p in game.players] == [
-        "player0",
-        "player1",
-        "player2",
-        "player3",
-    ]
+def test_repeat_add_player(make_game):
+    game = make_game
+    game.add_player("player_1")
+    assert game.add_player("player_1") == "Player player_1 already in game"
+
+
+def test_player_is_ready(make_game):
+    game = make_game
+    game.add_player("player_1")
+    game.player_is_ready("player_1")
+    assert game.players["player_1"].ready is True
+
+
+def test_all_players_ready(add_players):
+    game = add_players
+    game.player_is_ready("player_1")
+    game.player_is_ready("player_2")
+    game.player_is_ready("player_3")
+    game.player_is_ready("player_4")
+    game.player_is_ready("player_5")
+    assert game.check_all_players_ready() is True
 
 
 @pytest.mark.asyncio
-async def test_start(game):
-    start_task = asyncio.create_task(game.start())
-    await asyncio.sleep(
-        2
-    )  # Wait for 2 seconds to allow the game to start and countdown to decrease
-    print(game.countdown)
+async def test_start_stop_game(add_players):
+    game = add_players
+    asyncio.create_task(game.start_game())
+    await asyncio.sleep(2)
+    assert game.state.started is True
+    assert game.state.countdown < Constants.timer_countdown
 
-    assert game.started
-    assert 0 <= game.countdown < 10
-    await start_task
-
-    try:
-        await start_task
-    except asyncio.CancelledError:
-        print("Game task was cancelled as expected")
-
-    assert not game.started
-    assert (
-        game.countdown == 10
-    )  # Assuming the game resets countdown to 300 when stopped
+    await asyncio.sleep(Constants.timer_countdown)
+    # assert the game is finally stopped
+    assert game.state.started is False
+    assert game.state.countdown == Constants.timer_countdown
