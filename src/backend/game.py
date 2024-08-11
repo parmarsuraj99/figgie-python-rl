@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import random
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Union
 from uuid import uuid4
@@ -22,6 +24,22 @@ class GameState(BaseModel):
     countdown: int = Constants.timer_countdown
 
 
+class Suits(BaseModel):
+    suits: List[str] = ["hearts", "diamonds", "clubs", "spades"]
+    suit2colors: Dict[str, str] = {
+        "hearts": "red",
+        "diamonds": "red",
+        "clubs": "black",
+        "spades": "black",
+    }
+    color2suits: Dict[str, List[str]] = {
+        "red": ["hearts", "diamonds"],
+        "black": ["clubs", "spades"],
+    }
+    suit_counts: List[int] = [8, 10, 10, 12]
+    goal_suit_counts: List[int] = [8, 10]
+
+
 class Game:
     def __init__(
         self,
@@ -35,6 +53,43 @@ class Game:
         self.state = GameState(countdown=timer_max)
         self.players: Dict[str, Player] = {}
         self.event_listeners: Dict[str, List[Callable]] = {}
+        self.suits = Suits()
+
+    def get_goal_suit(self):
+        goal_suit = random.choice(["hearts", "diamonds", "clubs", "spades"])
+        return goal_suit
+
+    async def deal_cards(self):
+        # randomly deal cards to players
+
+        goal_suit = self.get_goal_suit()
+
+        suit2counts = {}
+        goal_suit_color = self.suits.suit2colors.get(goal_suit)
+        goal_suit_counts = random.choice(self.suits.goal_suit_counts)
+        same_color_other_suit = [
+            suit
+            for suit in self.suits.color2suits[goal_suit_color]
+            if suit != goal_suit
+        ][0]
+        suit2counts[goal_suit] = goal_suit_counts
+        suit2counts[same_color_other_suit] = 12
+        remaining_suits = [
+            suit
+            for suit in self.suits.suits
+            if suit != goal_suit and suit != same_color_other_suit
+        ]
+        remaining_counts = [10, 10] if goal_suit_counts == 8 else [8, 10]
+        random.shuffle(remaining_suits)
+        random.shuffle(remaining_counts)
+        for suit, count in zip(remaining_suits, remaining_counts):
+            suit2counts[suit] = count
+
+        emit_data = {
+            "goal_suit": goal_suit,
+            "suit2counts": suit2counts,
+        }
+        self.emit_event("game_state", emit_data)
 
     def add_event_listener(self, event: str, callback: Callable):
         if event not in self.event_listeners:
@@ -95,6 +150,9 @@ class Game:
     async def start_game(self):
         if not self.check_all_players_ready():
             return f"Not all players ready"
+
+        await self.deal_cards()
+
         self.state.started = True
         self.state.countdown = self.timer_max
         self.emit_event("game_started", self.game_id)
@@ -129,7 +187,7 @@ class WebSocketGame(Game):
         message_type = message.get("type")
         print(f"Received message from {player_id}: {message_type}")
 
-        if message_type == "add_player":
+        if message_type == "add_player":  # TODO: Change to join
             print(f"Adding player {player_id}")
             self.connections[player_id] = websocket
             self.add_player(player_id)
