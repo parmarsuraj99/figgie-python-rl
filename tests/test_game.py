@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from src.backend.game import app, Game, Player, GameState, Constants
+from src.backend.game_logic import app, Game, Player, GameState, Constants
 
 
 @pytest.fixture(scope="session")

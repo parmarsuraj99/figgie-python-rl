@@ -38,6 +38,21 @@ class GameClient:
         await self.websocket.send(ready_msg)
         log_to_file(self.player_id, f"Sent: {ready_msg}")
 
+    async def send_order(self, suit, price, is_bid):
+        order = json.dumps(
+            {
+                "type": "place_order",
+                "data": {
+                    "player_id": self.player_id,
+                    "suit": suit,
+                    "price": price,
+                    "is_bid": is_bid,
+                },
+            }
+        )
+        await self.websocket.send(order)
+        log_to_file(self.player_id, f"Sent order: {order}")
+
     async def receive_messages(self):
         try:
             while True:
@@ -47,6 +62,22 @@ class GameClient:
 
                 if "game_started" in response_data["type"]:
                     log_to_file(self.player_id, "Game started")
+
+                if "deal_cards" in response_data["type"]:
+                    log_to_file(self.player_id, "Received cards")
+
+                if "add_order_processed" in response_data["type"]:
+                    log_to_file(
+                        self.player_id, f"Received order: {response_data['data']}"
+                    )
+
+                if response_data["type"] == "game_state":
+                    if "countdown" in response_data["data"].keys():
+                        if (
+                            response_data["data"]["countdown"] == 8
+                            and self.player_id == "player_1"
+                        ):
+                            await self.send_order("hearts", 50, True)
 
                 # Add more specific message handling here if needed
         except asyncio.TimeoutError:

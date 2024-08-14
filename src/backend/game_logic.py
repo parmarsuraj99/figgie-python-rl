@@ -9,22 +9,12 @@ from uuid import uuid4
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.DEBUG)
+
 
 class Constants:
     timer_countdown = 10
-
-
-class Player(BaseModel):
-    player_id: str
-    ready: bool = False
-
-
-class GameState(BaseModel):
-    started: bool = False
-    countdown: int = Constants.timer_countdown
-
-
-class Suits(BaseModel):
     suits: List[str] = ["hearts", "diamonds", "clubs", "spades"]
     suit2colors: Dict[str, str] = {
         "hearts": "red",
@@ -38,6 +28,53 @@ class Suits(BaseModel):
     }
     suit_counts: List[int] = [8, 10, 10, 12]
     goal_suit_counts: List[int] = [8, 10]
+    cash_per_player = 400
+    cash_to_enter = 50
+
+
+class Player(BaseModel):
+    player_id: str
+    ready: bool = False
+
+
+class OrderBook(BaseModel):
+
+    sample_record: Dict[str, Union[int, str]] = {
+        "price": -1,
+        "player_id": "",
+        "order_id": -1,
+    }
+
+    bids: Dict[str, Dict[str, Union[int, str]]] = {
+        "diamonds": sample_record,
+        "hearts": sample_record,
+        "clubs": sample_record,
+        "spades": sample_record,
+    }
+    asks: Dict[str, Dict[str, Union[int, str]]] = {
+        "diamonds": sample_record,
+        "hearts": sample_record,
+        "clubs": sample_record,
+        "spades": sample_record,
+    }
+
+
+class Order(BaseModel):
+    is_bid: Union[bool, None] = None
+    suit: str = ""
+    price: int = -1
+    player_id: str = ""
+
+
+class GameState(BaseModel):
+    started: bool = False
+    countdown: int = Constants.timer_countdown
+    player2cards: Dict[str, Dict[str, int]] = {}
+    goal_suit: str = ""
+    # currently building for only one round so no need to have pay to play
+    # simply disribute the remaining cash to the players after adding the cash to the pot
+    player2cash: Dict[str, int] = {}
+    orderbook: OrderBook = OrderBook()
 
 
 class Game:
@@ -53,43 +90,119 @@ class Game:
         self.state = GameState(countdown=timer_max)
         self.players: Dict[str, Player] = {}
         self.event_listeners: Dict[str, List[Callable]] = {}
-        self.suits = Suits()
 
     def get_goal_suit(self):
         goal_suit = random.choice(["hearts", "diamonds", "clubs", "spades"])
         return goal_suit
 
-    async def deal_cards(self):
-        # randomly deal cards to players
-
-        goal_suit = self.get_goal_suit()
-
+    def get_suit_distribution(self, goal_suit):
         suit2counts = {}
-        goal_suit_color = self.suits.suit2colors.get(goal_suit)
-        goal_suit_counts = random.choice(self.suits.goal_suit_counts)
+        goal_suit_color = Constants.suit2colors[goal_suit]
+        goal_suit_counts = random.choice(Constants.goal_suit_counts)
         same_color_other_suit = [
-            suit
-            for suit in self.suits.color2suits[goal_suit_color]
-            if suit != goal_suit
+            suit for suit in Constants.color2suits[goal_suit_color] if suit != goal_suit
         ][0]
+
         suit2counts[goal_suit] = goal_suit_counts
         suit2counts[same_color_other_suit] = 12
-        remaining_suits = [
-            suit
-            for suit in self.suits.suits
-            if suit != goal_suit and suit != same_color_other_suit
-        ]
+
+        remaining_suits = [suit for suit in Constants.suits if suit not in suit2counts]
         remaining_counts = [10, 10] if goal_suit_counts == 8 else [8, 10]
         random.shuffle(remaining_suits)
         random.shuffle(remaining_counts)
+
         for suit, count in zip(remaining_suits, remaining_counts):
             suit2counts[suit] = count
 
-        emit_data = {
-            "goal_suit": goal_suit,
+        return suit2counts
+
+    def create_deck(self, suit2counts):
+        all_cards = [suit for suit, count in suit2counts.items() for _ in range(count)]
+        random.shuffle(all_cards)
+        return all_cards
+
+    def distribute_cards(self, all_cards):
+        player2cards = {
+            player_id: all_cards[i :: len(self.players)]
+            for i, player_id in enumerate(self.players)
+        }
+        return {
+            player_id: {suit: cards.count(suit) for suit in set(cards)}
+            for player_id, cards in player2cards.items()
+        }
+
+    def initialize_player_cash(self):
+        return {
+            player_id: Constants.cash_per_player - Constants.cash_to_enter
+            for player_id in self.players
+        }
+
+    async def deal_cards(self):
+        self.state.goal_suit = self.get_goal_suit()
+        suit2counts = self.get_suit_distribution(self.state.goal_suit)
+        all_cards = self.create_deck(suit2counts)
+
+        self.state.player2cards = self.distribute_cards(all_cards)
+        self.state.player2cash = self.initialize_player_cash()
+
+        game_state = {
+            "goal_suit": self.state.goal_suit,
             "suit2counts": suit2counts,
         }
-        self.emit_event("game_state", emit_data)
+        # TODO: Remove this once the game is fully implemented
+        self.emit_event("game_state", game_state)
+
+        for player_id in self.players:
+            player_state = {
+                "cards": self.state.player2cards[player_id],
+                "cash": self.state.player2cash[player_id],
+            }
+            self.emit_event(
+                "deal_cards", {"player_id": player_id, "data": player_state}
+            )
+
+    def process_add_order(self, order: Order):
+
+        # if bid then check for that suit in the orderbook
+        if order.is_bid:
+            current_bid = self.state.orderbook.bids[order.suit]
+            if order.price > current_bid.price:
+                self.state.orderbook.bids[order.suit] = {
+                    "price": order.price,
+                    "player_id": order.player_id,
+                    "order_id": 1,
+                }
+                message = "Order added"
+            else:
+                message = "Order not added"
+
+            self.emit_event(
+                "add_order",
+                {"player_id": order.player_id, "message": message},
+            )
+        else:
+            current_ask = self.state.orderbook.asks[order.suit]
+            if current_ask.price == -1:
+                self.state.orderbook.asks[order.suit] = {
+                    "price": order.price,
+                    "player_id": order.player_id,
+                    "order_id": 1,
+                }
+                message = "Order added"
+            elif order.price < current_ask.price:
+                self.state.orderbook.asks[order.suit] = {
+                    "price": order.price,
+                    "player_id": order.player_id,
+                    "order_id": 1,
+                }
+                message = "Order added"
+            else:
+                message = "Order not added"
+
+            self.emit_event(
+                "add_order_processed",
+                {"player_id": order.player_id, "message": message},
+            )
 
     def add_event_listener(self, event: str, callback: Callable):
         if event not in self.event_listeners:
@@ -135,7 +248,10 @@ class Game:
         while self.state.countdown > 0 and self.state.started:
             await asyncio.sleep(1)
             self.state.countdown -= 1
-            self.emit_event("game_state", deepcopy(self.state.__dict__))
+            state_to_broadcast = deepcopy(
+                self.state.model_dump(exclude={"player2cards", "goal_suit"})
+            )
+            self.emit_event("game_state", state_to_broadcast)
         if self.state.started:
             await self.stop_game()
 
@@ -173,13 +289,15 @@ class WebSocketGame(Game):
         self.add_event_listener("game_started", self.on_game_started)
         self.add_event_listener("game_state", self.on_game_state)
         self.add_event_listener("game_stopped", self.on_game_stopped)
+        self.add_event_listener("deal_cards", self.on_deal_cards)
+        self.add_event_listener("add_order_processed", self.on_add_order)
 
-    async def send_message(self, player_id: str, message: dict):
+    async def send_message(self, player_id: str, message: Dict):
         if websocket := self.connections.get(player_id):
             print(f"Sending message to {player_id}: {message}")
             await websocket.send_json(message)
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: Dict):
         for websocket in self.connections.values():
             await websocket.send_json(message)
 
@@ -198,6 +316,11 @@ class WebSocketGame(Game):
             if self.check_all_players_ready():
                 await self.pre_game_countdown()
 
+        elif message_type == "place_order":
+            print(f"Player {player_id} placed an order")
+            order = Order(**message["data"])
+            self.process_add_order(order)
+
     async def on_player_added(self, player_id: str):
         await self.broadcast({"type": "player_added", "data": {"player_id": player_id}})
 
@@ -212,6 +335,18 @@ class WebSocketGame(Game):
 
     async def on_game_stopped(self, game_id: str):
         await self.broadcast({"type": "game_stopped", "data": {"game_id": game_id}})
+
+    async def on_deal_cards(self, data: dict):
+        player_id = data["player_id"]
+        message = data["data"]
+        await self.send_message(player_id, {"type": "deal_cards", "data": message})
+
+    async def on_add_order(self, data: dict):
+        player_id = data["player_id"]
+        message = data["message"]
+        await self.send_message(
+            player_id, {"type": "add_order_processed", "data": message}
+        )
 
 
 app = FastAPI()
