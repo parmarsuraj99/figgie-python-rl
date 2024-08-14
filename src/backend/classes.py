@@ -3,6 +3,25 @@ from typing import Dict, List, Union
 from pydantic import BaseModel
 
 
+class Constants:
+    timer_countdown = 10
+    suits: List[str] = ["hearts", "diamonds", "clubs", "spades"]
+    suit2colors: Dict[str, str] = {
+        "hearts": "red",
+        "diamonds": "red",
+        "clubs": "black",
+        "spades": "black",
+    }
+    color2suits: Dict[str, List[str]] = {
+        "red": ["hearts", "diamonds"],
+        "black": ["clubs", "spades"],
+    }
+    suit_counts: List[int] = [8, 10, 10, 12]
+    goal_suit_counts: List[int] = [8, 10]
+    cash_per_player = 400
+    cash_to_enter = 50
+
+
 class Player(BaseModel):
     player_id: str
     ready: bool = False
