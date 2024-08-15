@@ -19,6 +19,8 @@ class WebSocketGame(Game):
         self.add_event_listener("game_stopped", self.on_game_stopped)
         self.add_event_listener("deal_cards", self.on_deal_cards)
         self.add_event_listener("add_order_processed", self.on_add_order)
+        self.add_event_listener("accept_order_processed", self.on_accept_order)
+        self.add_event_listener("transaction_processed", self.on_transaction_processed)
 
     async def send_message(self, player_id: str, message: Dict):
         if websocket := self.connections.get(player_id):
@@ -50,6 +52,12 @@ class WebSocketGame(Game):
             order = Order(**message["data"])
             self.process_add_order(order)
 
+        elif message_type == "accept_order":
+            print(f"Player {player_id} accepted an order")
+            print(message)
+            order = Order(**message["data"])
+            self.process_accept_order(order)
+
     async def on_player_added(self, player_id: str):
         await self.broadcast({"type": "player_added", "data": {"player_id": player_id}})
 
@@ -76,3 +84,16 @@ class WebSocketGame(Game):
         await self.send_message(
             player_id, {"type": "add_order_processed", "data": message}
         )
+
+    async def on_accept_order(self, data: dict):
+        player_id = data["player_id"]
+        message = data["message"]
+        await self.send_message(
+            player_id, {"type": "accept_order_processed", "data": message}
+        )
+
+    async def on_transaction_processed(self, data: dict):
+        player_id = data["player_id"]
+        message = data["message"]
+        # broadcast to all players
+        await self.broadcast({"type": "transaction_processed", "data": message})

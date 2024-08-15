@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 
-from .classes import Constants, GameState, Order, Player, SampleRecord
+from .classes import Constants, GameState, Order, Player, SampleRecord, OrderBook
 
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.DEBUG)
@@ -153,6 +153,64 @@ class Game:
                 "add_order_processed",
                 {"player_id": order.player_id, "message": message},
             )
+
+    def process_accept_order(self, order: Order):
+        if order.is_bid:
+            current_bid = self.state.orderbook.bids[order.suit]
+            current_bid_player_id = current_bid.player_id
+            if order.player_id == current_bid.player_id:
+                message = "Order not accepted, cannot accept own bid"
+            if self.state.player2cards[order.player_id][order.suit] > 0:
+                self.state.orderbook.bids[order.suit] = SampleRecord()
+                self.state.player2cash[order.player_id] -= current_bid.price
+                self.state.player2cash[current_bid.player_id] += current_bid.price
+                self.state.player2cards[order.player_id][order.suit] += 1
+                self.state.player2cards[current_bid.player_id][order.suit] -= 1
+                self.state.player2card_count[order.player_id] += 1
+                self.state.player2card_count[current_bid.player_id] -= 1
+                message = "Order accepted"
+
+                self.emit_event(
+                    "transaction_processed",
+                    {
+                        "from": current_bid_player_id,
+                        "to": order.player_id,
+                        "amount": order.price,
+                    },
+                )
+        else:
+            current_ask = self.state.orderbook.asks[order.suit]
+            if order.player_id == current_ask.player_id:
+                message = "Order not accepted, cannot accept own ask"
+            if self.state.player2cash[order.player_id] >= current_ask.price:
+                self.state.orderbook.asks[order.suit] = SampleRecord()
+                self.state.player2cash[order.player_id] += current_ask.price
+                self.state.player2cash[current_ask.player_id] -= current_ask.price
+                self.state.player2cards[order.player_id][order.suit] -= 1
+                self.state.player2cards[current_ask.player_id][order.suit] += 1
+                self.state.player2card_count[order.player_id] -= 1
+                self.state.player2card_count[current_ask.player_id] += 1
+                message = "Order accepted"
+                self.emit_event
+                (
+                    "transaction",
+                    {
+                        "from": order.player_id,
+                        "to": current_ask.player_id,
+                        "amount": order.price,
+                    },
+                )
+            else:
+                message = "Order not accepted"
+
+        if message == "Order accepted":
+            # reset the order book
+            self.state.orderbook = OrderBook()
+
+        self.emit_event(
+            "accept_order_processed",
+            {"player_id": order.player_id, "message": message},
+        )
 
     def add_event_listener(self, event: str, callback: Callable):
         if event not in self.event_listeners:

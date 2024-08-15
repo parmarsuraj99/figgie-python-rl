@@ -38,7 +38,7 @@ class GameClient:
         await self.websocket.send(ready_msg)
         log_to_file(self.player_id, f"Sent: {ready_msg}")
 
-    async def send_order(self, suit, price, is_bid):
+    async def place_order(self, suit, price, is_bid):
         order = json.dumps(
             {
                 "type": "place_order",
@@ -52,6 +52,20 @@ class GameClient:
         )
         await self.websocket.send(order)
         log_to_file(self.player_id, f"Sent order: {order}")
+
+    async def accept_order(self, suit, is_bid):
+        accept_order = json.dumps(
+            {
+                "type": "accept_order",
+                "data": {
+                    "player_id": self.player_id,
+                    "suit": suit,
+                    "is_bid": is_bid,
+                },
+            }
+        )
+        await self.websocket.send(accept_order)
+        log_to_file(self.player_id, f"Sent order: {accept_order}")
 
     async def receive_messages(self):
         try:
@@ -71,19 +85,36 @@ class GameClient:
                         self.player_id, f"Received order: {response_data['data']}"
                     )
 
+                if "accept_order_processed" in response_data["type"]:
+                    log_to_file(
+                        self.player_id, f"Received order: {response_data['data']}"
+                    )
+
                 if response_data["type"] == "game_state":
                     if "countdown" in response_data["data"].keys():
                         if (
                             response_data["data"]["countdown"] == 8
                             and self.player_id == "player_1"
                         ):
-                            await self.send_order("hearts", 50, True)
+                            await self.place_order("hearts", 5, True)
 
                         if (
-                            response_data["data"]["countdown"] == 4
+                            response_data["data"]["countdown"] == 6
                             and self.player_id == "player_2"
                         ):
-                            await self.send_order("hearts", 60, True)
+                            await self.place_order("hearts", 6, True)
+
+                        if (
+                            response_data["data"]["countdown"] == 5
+                            and self.player_id == "player_3"
+                        ):
+                            await self.place_order("hearts", 6, False)
+
+                        if (
+                            response_data["data"]["countdown"] == 3
+                            and self.player_id == "player_4"
+                        ):
+                            await self.accept_order("hearts", True)
 
                 # Add more specific message handling here if needed
         except asyncio.TimeoutError:
