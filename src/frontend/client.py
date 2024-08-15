@@ -79,6 +79,12 @@ class GameClient:
                         ):
                             await self.send_order("hearts", 50, True)
 
+                        if (
+                            response_data["data"]["countdown"] == 4
+                            and self.player_id == "player_2"
+                        ):
+                            await self.send_order("hearts", 60, True)
+
                 # Add more specific message handling here if needed
         except asyncio.TimeoutError:
             log_to_file(

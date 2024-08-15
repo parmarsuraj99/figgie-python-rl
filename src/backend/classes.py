@@ -27,26 +27,25 @@ class Player(BaseModel):
     ready: bool = False
 
 
-sample_record: Dict[str, Union[int, str]] = {
-    "price": -1,
-    "player_id": "",
-    "order_id": -1,
-}
+class SampleRecord(BaseModel):
+    price: int = -1
+    player_id: str = ""
+    order_id: int = -1
 
 
 class OrderBook(BaseModel):
 
-    bids: Dict[str, Dict[str, Union[int, str]]] = {
-        "diamonds": sample_record,
-        "hearts": sample_record,
-        "clubs": sample_record,
-        "spades": sample_record,
+    bids: Dict[str, SampleRecord] = {
+        "diamonds": SampleRecord(),
+        "hearts": SampleRecord(),
+        "clubs": SampleRecord(),
+        "spades": SampleRecord(),
     }
-    asks: Dict[str, Dict[str, Union[int, str]]] = {
-        "diamonds": sample_record,
-        "hearts": sample_record,
-        "clubs": sample_record,
-        "spades": sample_record,
+    asks: Dict[str, SampleRecord] = {
+        "diamonds": SampleRecord(),
+        "hearts": SampleRecord(),
+        "clubs": SampleRecord(),
+        "spades": SampleRecord(),
     }
 
 
@@ -61,6 +60,7 @@ class GameState(BaseModel):
     started: bool = False
     countdown: int = Constants.timer_countdown
     player2cards: Dict[str, Dict[str, int]] = {}
+    player2card_count: Dict[str, int] = {}
     goal_suit: str = ""
     # currently building for only one round so no need to have pay to play
     # simply disribute the remaining cash to the players after adding the cash to the pot

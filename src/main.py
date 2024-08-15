@@ -1,9 +1,16 @@
-from fastapi import FastAPI, WebSocket
-from uuid import uuid4
-from backend.websocket_game import WebSocketGame
 import sys
+from uuid import uuid4
+
+from fastapi import FastAPI, WebSocket
+
+from backend.websocket_game import WebSocketGame
 
 sys.path.append("src")
+
+import logging
+
+# logger = logging.getLogger("uvicorn.error")
+# logger.setLevel(logging.DEBUG)
 
 
 app = FastAPI()

@@ -46,6 +46,7 @@ class WebSocketGame(Game):
 
         elif message_type == "place_order":
             print(f"Player {player_id} placed an order")
+            print(message)
             order = Order(**message["data"])
             self.process_add_order(order)
 

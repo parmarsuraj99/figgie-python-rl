@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 
-from .classes import Constants, GameState, Order, Player
+from .classes import Constants, GameState, Order, Player, SampleRecord
 
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.DEBUG)
@@ -82,6 +82,10 @@ class Game:
 
         self.state.player2cards = self.distribute_cards(all_cards)
         self.state.player2cash = self.initialize_player_cash()
+        self.state.player2card_count = {
+            player_id: sum(cards.values())
+            for player_id, cards in self.state.player2cards.items()
+        }
 
         game_state = {
             "goal_suit": self.state.goal_suit,
@@ -105,12 +109,15 @@ class Game:
         if order.is_bid:
             current_bid = self.state.orderbook.bids[order.suit]
             if order.price > current_bid.price:
-                self.state.orderbook.bids[order.suit] = {
-                    "price": order.price,
-                    "player_id": order.player_id,
-                    "order_id": 1,
-                }
+                self.state.orderbook.bids[order.suit] = SampleRecord(
+                    **{
+                        "price": order.price,
+                        "player_id": order.player_id,
+                        "order_id": 1,
+                    }
+                )
                 message = "Order added"
+                # Don't remove the fund at bid; only when an agreement is reached
             else:
                 message = "Order not added"
 
@@ -121,21 +128,26 @@ class Game:
         else:
             current_ask = self.state.orderbook.asks[order.suit]
             if current_ask.price == -1:
-                self.state.orderbook.asks[order.suit] = {
-                    "price": order.price,
-                    "player_id": order.player_id,
-                    "order_id": 1,
-                }
+                self.state.orderbook.asks[order.suit] = SampleRecord(
+                    **{
+                        "price": order.price,
+                        "player_id": order.player_id,
+                        "order_id": 1,
+                    }
+                )
                 message = "Order added"
             elif order.price < current_ask.price:
-                self.state.orderbook.asks[order.suit] = {
-                    "price": order.price,
-                    "player_id": order.player_id,
-                    "order_id": 1,
-                }
+                self.state.orderbook.asks[order.suit] = SampleRecord(
+                    **{
+                        "price": order.price,
+                        "player_id": order.player_id,
+                        "order_id": 1,
+                    }
+                )
                 message = "Order added"
             else:
                 message = "Order not added"
+            print(message)
 
             self.emit_event(
                 "add_order_processed",
@@ -211,6 +223,3 @@ class Game:
         self.state.countdown = self.timer_max
         self.emit_event("game_started", self.game_id)
         self.countdown_task = asyncio.create_task(self.countdown())
-
-
-
