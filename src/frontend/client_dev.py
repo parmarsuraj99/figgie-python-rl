@@ -1,9 +1,14 @@
 import asyncio
 import json
-import websockets
-from datetime import datetime
 import os
 import random
+from collections import deque
+from datetime import datetime
+from typing import Dict, List, Union, Literal, Optional
+
+import openai
+import websockets
+from dotenv import load_dotenv
 
 
 def log_to_file(player_id, message):
@@ -16,9 +21,9 @@ def log_to_file(player_id, message):
 
 
 class GameClient:
-    def __init__(self, player_id, uri):
+    def __init__(self, player_id, game_uri):
         self.player_id = player_id
-        self.uri = uri
+        self.uri = game_uri + f"/{player_id}"
         self.websocket = None
         self.game_state = {}
         self.cards = {}
@@ -100,6 +105,10 @@ class GameClient:
                         self.game_state = response_data["data"]
                         await self.make_decision()
 
+                    elif response_data["type"] == "game_ended":
+                        log_to_file(self.player_id, "Game ended")
+                        break
+
                     elif response_data["type"] in [
                         "add_order_processed",
                         "accept_order_processed",
@@ -159,28 +168,24 @@ class AggressiveTrader(GameClient):
             bid = self.game_state["orderbook"]["bids"].get(suit, {"price": -1})["price"]
             ask = self.game_state["orderbook"]["asks"].get(suit, {"price": -1})["price"]
 
-            if random.random() < 0.5:  # 70% chance to make a move
+            if random.random() < 0.5:  # 50% chance to make a move
                 if self.cards.get(suit, 0) > 0:
                     # If we have the card, try to sell at a higher price
                     if bid == -1:
-                        sell_price = random.randint(
-                            5, 20
-                        )  # Set an initial price if no bids
+                        sell_price = random.randint(5, 20)
                     else:
                         sell_price = bid + random.randint(1, 5)
                     await self.place_order(suit, sell_price, False)
                 elif self.cash >= 1:
                     # If we don't have the card and have enough cash, try to buy
                     if ask == -1:
-                        buy_price = random.randint(
-                            1, 15
-                        )  # Set an initial price if no asks
+                        buy_price = random.randint(1, 15)
                     else:
                         buy_price = max(1, ask - random.randint(1, 5))
                     await self.place_order(suit, buy_price, True)
 
             # Randomly accept orders
-            if random.random() < 0.5:  # 30% chance to accept an order
+            if random.random() < 0.3:  # 30% chance to accept an order
                 if self.cards.get(suit, 0) > 0 and bid > 0:
                     await self.accept_order(suit, True)  # Accept a bid (sell)
                 elif self.cash >= ask and ask > 0:
@@ -265,6 +270,9 @@ class MarketMaker(GameClient):
                     new_bid = min(bid + 1, ask - spread)
                     new_ask = max(ask - 1, bid + spread)
 
+                if new_bid < 0 or new_ask < 0:
+                    continue
+
                 if self.cash >= new_bid:
                     await self.place_order(suit, new_bid, True)
                 if self.cards.get(suit, 0) > 0:
@@ -278,15 +286,187 @@ class MarketMaker(GameClient):
                     await self.accept_order(suit, False)  # Accept an ask (buy)
 
 
+from pydantic import BaseModel
+
+
+class Order(BaseModel):
+    action: Literal["place_order", "accept_order", "wait"]
+    suit: Literal["hearts", "diamonds", "clubs", "spades"]
+    price: int
+    is_bid: bool
+
+
+class Orders(BaseModel):
+    orders: List[Order]
+
+
+class OpenAILLMAgent(GameClient):
+    def __init__(self, player_id, uri, instructions: str):
+        super().__init__(player_id, uri)
+        self.cash = 400
+        self.inventory = {suit: 0 for suit in ["hearts", "diamonds", "clubs", "spades"]}
+        self.recent_updates = deque(maxlen=5)
+        self.instructions = instructions
+
+        # Load OpenAI API key from .env file
+        load_dotenv()
+        self.client = openai.OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+
+        self.system_prompt = f"""
+        You are an AI agent playing a card trading game called Figgie. Your goal is to maximize your profit by trading cards and predicting the goal suit. Here are the rules:
+
+        1. There are four suits: hearts, diamonds, clubs, and spades.
+        2. One suit is secretly chosen as the goal suit, worth 10 points each at the end.
+        3. You start with 400 cash and a random distribution of cards. 50 cash is required to enter the game.
+        4. You can buy and sell cards by placing or accepting orders.
+        5. The game ends after a set time, and the player with the highest score (goal cards * 10 + cash) wins.
+
+        Your task is to {self.instructions}. You can place orders, accept orders, or wait for more information before making a decision. Good luck!
+        """
+
+    async def make_decision(self):
+        if "orderbook" not in self.game_state:
+            return
+
+        # Prepare the prompt with the current game state and recent updates
+        prompt = f"""
+        Current game state:
+        {self.game_state}
+
+        Your inventory:
+        {self.inventory}
+
+        Your cash:
+        {self.cash}
+
+        Recent updates:
+        {list(self.recent_updates)}
+
+        Based on this information, what action would you like to take? Respond with a JSON-formatted decision.
+        """
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model="gpt-4o-mini",  # Use a smaller model for faster response times
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format=Order,
+            )
+
+            decision = response.choices[0].message.parsed.model_dump_json()
+
+            decision_dict = json.loads(decision)
+            decision_dict["player_id"] = self.player_id
+
+            if decision_dict["action"] == "place_order":
+                await self.place_order(
+                    decision_dict["suit"],
+                    decision_dict["price"],
+                    decision_dict["is_bid"],
+                )
+            elif decision_dict["action"] == "accept_order":
+                await self.accept_order(decision_dict["suit"], decision_dict["is_bid"])
+            # If action is "wait", do nothing
+
+        except Exception as e:
+            log_to_file(self.player_id, f"Error in make_decision: {str(e)}")
+
+    async def receive_messages(self):
+        try:
+            while True:
+                try:
+
+                    response = await asyncio.wait_for(self.websocket.recv(), timeout=30)
+                    response_data = json.loads(response)
+                    log_to_file(self.player_id, f"Received: {response_data}")
+
+                    # Add the update to recent_updates
+                    self.recent_updates.append(response_data)
+
+                    if response_data["type"] == "game_started":
+                        log_to_file(self.player_id, "Game started")
+
+                    elif response_data["type"] == "deal_cards":
+                        self.cards = response_data["data"]["cards"]
+                        self.cash = response_data["data"]["cash"]
+                        log_to_file(
+                            self.player_id,
+                            f"Received cards: {self.cards} and cash: {self.cash}",
+                        )
+
+                    elif response_data["type"] == "game_state":
+                        self.game_state = response_data["data"]
+                        await self.make_decision()
+
+                    elif response_data["type"] == "game_ended":
+                        log_to_file(self.player_id, "Game ended")
+                        break
+
+                    elif response_data["type"] in [
+                        "add_order_processed",
+                        "accept_order_processed",
+                    ]:
+                        log_to_file(
+                            self.player_id, f"Order processed: {response_data['data']}"
+                        )
+                        await self.order_queue.get()  # Remove the processed order from the queue
+
+                    elif response_data["type"] == "transaction_processed":
+                        await self.update_after_transaction(response_data["data"])
+
+                except asyncio.TimeoutError:
+                    log_to_file(
+                        self.player_id,
+                        "No response from server, checking order queue...",
+                    )
+                    if not self.order_queue.empty():
+                        last_order = await self.order_queue.get()
+                        log_to_file(
+                            self.player_id, f"Resending last order: {last_order}"
+                        )
+                        await self.websocket.send(last_order)
+
+        except asyncio.TimeoutError:
+            log_to_file(
+                self.player_id, "No message received for 30 seconds, closing connection"
+            )
+        except websockets.exceptions.ConnectionClosed:
+            log_to_file(self.player_id, "Connection closed")
+        finally:
+            await self.websocket.close()
+            log_to_file(self.player_id, "Disconnected")
+
+
 async def main():
     base_uri = f"ws://localhost:8000/ws"
     agents = [
-        AggressiveTrader("aggressive_trader", f"{base_uri}/aggressive_trader"),
-        SpeculativeAccumulator(
-            "speculative_accumulator", f"{base_uri}/speculative_accumulator"
+        AggressiveTrader("aggressive_trader", f"{base_uri}"),
+        SpeculativeAccumulator("speculative_accumulator", f"{base_uri}"),
+        MarketMaker("market_maker", f"{base_uri}"),
+        OpenAILLMAgent(
+            "openai_champion",
+            f"{base_uri}",
+            instructions="Guess and place smart orders to maximize profit and win the game",
         ),
-        MarketMaker("market_maker", f"{base_uri}/market_maker"),
-        MarketMaker("market_maker2", f"{base_uri}/market_maker2"),
+        # OpenAILLMAgent(
+        #     "openai_seller",
+        #     f"{base_uri}",
+        #     instructions="Aggressively Sell all cards, lower ask",
+        # ),
+        # OpenAILLMAgent(
+        #     "openai_buyer",
+        #     f"{base_uri}",
+        #     instructions="Aggressively buy all cards, bid high",
+        # ),
+        # OpenAILLMAgent(
+        #     "openai_mm",
+        #     f"{base_uri}",
+        #     instructions="Market Maker strategy to keep spread",
+        # ),
     ]
 
     # Connect all agents

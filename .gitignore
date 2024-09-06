@@ -2,3 +2,4 @@
 **/.pytest_cache/
 player_logs/
 notes.md
+.env

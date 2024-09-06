@@ -21,6 +21,7 @@ class Game:
         game_id: str,
         max_players: int = 5,
         timer_max: int = Constants.timer_countdown,
+        update_interval: int = Constants.update_interval,
     ):
         self.game_id = game_id
         self.max_players = max_players
@@ -28,6 +29,7 @@ class Game:
         self.state = GameState(countdown=timer_max)
         self.players: Dict[str, Player] = {}
         self.event_listeners: Dict[str, List[Callable]] = {}
+        self.update_interval = update_interval
 
     def get_goal_suit(self):
         goal_suit = random.choice(["hearts", "diamonds", "clubs", "spades"])
@@ -91,8 +93,6 @@ class Game:
             "goal_suit": self.state.goal_suit,
             "suit2counts": suit2counts,
         }
-        # TODO: Remove this once the game is fully implemented
-        self.emit_event("game_state", game_state)
 
         for player_id in self.players:
             player_state = {
@@ -155,62 +155,86 @@ class Game:
             )
 
     async def process_accept_order(self, order: Order):
+        message = ""
         if order.is_bid:
             current_bid = self.state.orderbook.bids[order.suit]
-            current_bid_player_id = current_bid.player_id
-            if order.player_id == current_bid.player_id:
+            seller_id = order.player_id
+            buyer_id = current_bid.player_id
+            price = current_bid.price
+
+            if seller_id == buyer_id:
                 message = "Order not accepted, cannot accept own bid"
-            if self.state.player2cards[order.player_id][order.suit] > 0:
-                self.state.orderbook.bids[order.suit] = SampleRecord()
-                self.state.player2cash[order.player_id] -= current_bid.price
-                self.state.player2cash[current_bid.player_id] += current_bid.price
-                self.state.player2cards[order.player_id][order.suit] += 1
-                self.state.player2cards[current_bid.player_id][order.suit] -= 1
-                self.state.player2card_count[order.player_id] += 1
-                self.state.player2card_count[current_bid.player_id] -= 1
+            elif self.state.player2cards[seller_id][order.suit] <= 0:
+                message = "Order not accepted, seller does not have enough cards"
+            elif self.state.player2cash[buyer_id] < price:
+                message = "Order not accepted, buyer does not have enough cash"
+            else:
+                # Process the transaction
+                self.state.player2cash[seller_id] += price
+                self.state.player2cash[buyer_id] -= price
+                self.state.player2cards[seller_id][order.suit] -= 1
+                self.state.player2cards[buyer_id][order.suit] += 1
+                self.state.player2card_count[seller_id] -= 1
+                self.state.player2card_count[buyer_id] += 1
                 message = "Order accepted"
 
                 self.emit_event(
                     "transaction_processed",
                     {
-                        "from": current_bid_player_id,
-                        "to": order.player_id,
-                        "amount": order.price,
+                        "from": seller_id,
+                        "to": buyer_id,
+                        "suit": order.suit,
+                        "amount": price,
                     },
                 )
-        else:
+        else:  # ask order
             current_ask = self.state.orderbook.asks[order.suit]
-            if order.player_id == current_ask.player_id:
+            buyer_id = order.player_id
+            seller_id = current_ask.player_id
+            price = current_ask.price
+
+            if buyer_id == seller_id:
                 message = "Order not accepted, cannot accept own ask"
-            if self.state.player2cash[order.player_id] >= current_ask.price:
-                self.state.orderbook.asks[order.suit] = SampleRecord()
-                self.state.player2cash[order.player_id] += current_ask.price
-                self.state.player2cash[current_ask.player_id] -= current_ask.price
-                self.state.player2cards[order.player_id][order.suit] -= 1
-                self.state.player2cards[current_ask.player_id][order.suit] += 1
-                self.state.player2card_count[order.player_id] -= 1
-                self.state.player2card_count[current_ask.player_id] += 1
+            elif self.state.player2cards[seller_id][order.suit] <= 0:
+                message = "Order not accepted, seller does not have enough cards"
+            elif self.state.player2cash[buyer_id] < price:
+                message = "Order not accepted, buyer does not have enough cash"
+            else:
+                # Process the transaction
+                self.state.player2cash[buyer_id] -= price
+                self.state.player2cash[seller_id] += price
+                self.state.player2cards[buyer_id][order.suit] += 1
+                self.state.player2cards[seller_id][order.suit] -= 1
+                self.state.player2card_count[buyer_id] += 1
+                self.state.player2card_count[seller_id] -= 1
                 message = "Order accepted"
-                self.emit_event
-                (
+
+                self.emit_event(
                     "transaction_processed",
                     {
-                        "from": order.player_id,
-                        "to": current_ask.player_id,
-                        "amount": order.price,
+                        "from": seller_id,
+                        "to": buyer_id,
+                        "suit": order.suit,
+                        "amount": price,
                     },
                 )
-            else:
-                message = "Order not accepted"
 
         if message == "Order accepted":
-            # reset the order book
-            self.state.orderbook = OrderBook()
+            # Reset the order book for this suit
+            self.state.orderbook.bids[order.suit] = SampleRecord()
+            self.state.orderbook.asks[order.suit] = SampleRecord()
 
         self.emit_event(
             "accept_order_processed",
             {"player_id": order.player_id, "message": message},
         )
+
+        # Log the transaction for debugging
+        logger.debug(
+            f"Transaction: {message}. Current state: {self.state.model_dump()}"
+        )
+
+        return message
 
     def add_event_listener(self, event: str, callback: Callable):
         if event not in self.event_listeners:
@@ -267,7 +291,7 @@ class Game:
 
     async def countdown(self):
         while self.state.countdown > 0 and self.state.started:
-            await asyncio.sleep(1)
+            await asyncio.sleep(self.update_interval)
             self.state.countdown -= 1
             state_to_broadcast = deepcopy(
                 self.state.model_dump(exclude={"player2cards", "goal_suit"})
