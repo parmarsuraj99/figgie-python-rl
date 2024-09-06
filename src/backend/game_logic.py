@@ -3,7 +3,7 @@ import json
 import logging
 import random
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union, Tuple
 from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket
@@ -103,7 +103,7 @@ class Game:
                 "deal_cards", {"player_id": player_id, "data": player_state}
             )
 
-    def process_add_order(self, order: Order):
+    async def process_add_order(self, order: Order):
 
         # if bid then check for that suit in the orderbook
         if order.is_bid:
@@ -154,7 +154,7 @@ class Game:
                 {"player_id": order.player_id, "message": message},
             )
 
-    def process_accept_order(self, order: Order):
+    async def process_accept_order(self, order: Order):
         if order.is_bid:
             current_bid = self.state.orderbook.bids[order.suit]
             current_bid_player_id = current_bid.player_id
@@ -193,7 +193,7 @@ class Game:
                 message = "Order accepted"
                 self.emit_event
                 (
-                    "transaction",
+                    "transaction_processed",
                     {
                         "from": order.player_id,
                         "to": current_ask.player_id,
@@ -246,6 +246,19 @@ class Game:
         )
         return are_all_ready
 
+    def calculate_winner(self) -> Tuple[str, int]:
+        max_score = -1
+        winner = ""
+        for player_id, cards in self.state.player2cards.items():
+            score = (
+                cards.get(self.state.goal_suit, 0) * 10
+                + self.state.player2cash[player_id]
+            )
+            if score > max_score:
+                max_score = score
+                winner = player_id
+        return winner, max_score
+
     async def pre_game_countdown(self):
         for i in range(3, 0, -1):
             await asyncio.sleep(1)
@@ -269,7 +282,25 @@ class Game:
         if self.countdown_task:
             self.countdown_task.cancel()
             self.countdown_task = None
-        self.emit_event("game_stopped", self.game_id)
+
+        winner, score = self.calculate_winner()
+
+        end_game_stats = {
+            "goal_suit": self.state.goal_suit,
+            "winner": winner,
+            "winner_score": score,
+            "final_player_stats": {
+                player_id: {
+                    "cards": cards,
+                    "cash": self.state.player2cash[player_id],
+                    "score": cards.get(self.state.goal_suit, 0) * 10
+                    + self.state.player2cash[player_id],
+                }
+                for player_id, cards in self.state.player2cards.items()
+            },
+        }
+
+        self.emit_event("game_ended", end_game_stats)
 
     async def start_game(self):
         if not self.check_all_players_ready():
