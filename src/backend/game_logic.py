@@ -104,55 +104,83 @@ class Game:
             )
 
     async def process_add_order(self, order: Order):
+        message = "Order added"
 
-        # if bid then check for that suit in the orderbook
         if order.is_bid:
-            current_bid = self.state.orderbook.bids[order.suit]
-            if order.price > current_bid.price:
-                self.state.orderbook.bids[order.suit] = SampleRecord(
-                    **{
-                        "price": order.price,
-                        "player_id": order.player_id,
-                        "order_id": 1,
-                    }
-                )
-                message = "Order added"
-                # Don't remove the fund at bid; only when an agreement is reached
-            else:
-                message = "Order not added"
-
-            self.emit_event(
-                "add_order",
-                {"player_id": order.player_id, "message": message},
-            )
-        else:
             current_ask = self.state.orderbook.asks[order.suit]
-            if current_ask.price == -1:
-                self.state.orderbook.asks[order.suit] = SampleRecord(
-                    **{
-                        "price": order.price,
-                        "player_id": order.player_id,
-                        "order_id": 1,
-                    }
+            if current_ask.price != -1 and order.price >= current_ask.price:
+                # Automatic match
+                await self.execute_trade(
+                    order.player_id,
+                    current_ask.player_id,
+                    order.suit,
+                    current_ask.price,
                 )
-                message = "Order added"
-            elif order.price < current_ask.price:
-                self.state.orderbook.asks[order.suit] = SampleRecord(
-                    **{
-                        "price": order.price,
-                        "player_id": order.player_id,
-                        "order_id": 1,
-                    }
-                )
-                message = "Order added"
+                message = "Order matched and executed"
             else:
-                message = "Order not added"
-            print(message)
+                current_bid = self.state.orderbook.bids[order.suit]
+                if order.price > current_bid.price:
+                    self.state.orderbook.bids[order.suit] = SampleRecord(
+                        price=order.price,
+                        player_id=order.player_id,
+                        order_id=1,
+                    )
+        else:  # ask order
+            current_bid = self.state.orderbook.bids[order.suit]
+            if current_bid.price != -1 and order.price <= current_bid.price:
+                # Automatic match
+                await self.execute_trade(
+                    current_bid.player_id, order.player_id, order.suit, order.price
+                )
+                message = "Order matched and executed"
+            else:
+                current_ask = self.state.orderbook.asks[order.suit]
+                if current_ask.price == -1 or order.price < current_ask.price:
+                    self.state.orderbook.asks[order.suit] = SampleRecord(
+                        price=order.price,
+                        player_id=order.player_id,
+                        order_id=1,
+                    )
 
-            self.emit_event(
-                "add_order_processed",
-                {"player_id": order.player_id, "message": message},
-            )
+        self.emit_event(
+            "add_order_processed",
+            {"player_id": order.player_id, "message": message},
+        )
+
+    async def execute_trade(self, buyer_id: str, seller_id: str, suit: str, price: int):
+        if self.state.player2cards[seller_id][suit] <= 0:
+            return "Trade not executed, seller does not have enough cards"
+        if self.state.player2cash[buyer_id] < price:
+            return "Trade not executed, buyer does not have enough cash"
+
+        # Process the transaction
+        self.state.player2cash[seller_id] += price
+        self.state.player2cash[buyer_id] -= price
+        self.state.player2cards[seller_id][suit] -= 1
+        self.state.player2cards[buyer_id][suit] += 1
+        self.state.player2card_count[seller_id] -= 1
+        self.state.player2card_count[buyer_id] += 1
+
+        # Reset the order book for this suit
+        self.state.orderbook.bids[suit] = SampleRecord()
+        self.state.orderbook.asks[suit] = SampleRecord()
+
+        self.emit_event(
+            "transaction_processed",
+            {
+                "from": seller_id,
+                "to": buyer_id,
+                "suit": suit,
+                "amount": price,
+            },
+        )
+
+        # Log the transaction for debugging
+        logger.debug(
+            f"Trade executed: {buyer_id} bought {suit} from {seller_id} for {price}. Current state: {self.state.model_dump()}"
+        )
+
+        return "Trade executed successfully"
 
     async def process_accept_order(self, order: Order):
         message = ""
@@ -290,7 +318,11 @@ class Game:
         await self.start_game()
 
     async def countdown(self):
-        while self.state.countdown > 0 and self.state.started:
+        while (
+            self.state.countdown > 0
+            and self.state.started
+            and self.check_all_players_ready()
+        ):
             await asyncio.sleep(self.update_interval)
             self.state.countdown -= 1
             state_to_broadcast = deepcopy(

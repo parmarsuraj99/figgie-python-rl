@@ -9,12 +9,31 @@ sys.path.append("src")
 
 import logging
 
+import fasthtml.common as fhc
+from fastapi.responses import HTMLResponse
+
 # logger = logging.getLogger("uvicorn.error")
 # logger.setLevel(logging.DEBUG)
 
 
+async def get_game_ui():
+    with open("src/backend/static/game_ui.html", "r") as file:
+        return HTMLResponse(content=file.read(), status_code=200)
+
+
+def setup_routes(app: FastAPI, game: WebSocketGame):
+    @app.get("/")
+    async def get_ui():
+        return HTMLResponse(content=await get_game_ui(), status_code=200)
+
+    @app.websocket("/ws/ui")
+    async def websocket_ui_endpoint(websocket: WebSocket):
+        await game.handle_ui_connection(websocket)
+
+
 app = FastAPI()
 game = WebSocketGame(game_id=str(uuid4()))
+setup_routes(app, game)
 
 
 @app.websocket("/ws/{player_id}")
@@ -35,4 +54,11 @@ async def websocket_endpoint(websocket: WebSocket, player_id: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="localhost", port=8000, reload=True, log_level="info", workers=1)
+    uvicorn.run(
+        "main:app",
+        host="localhost",
+        port=8000,
+        reload=True,
+        log_level="info",
+        workers=2,
+    )

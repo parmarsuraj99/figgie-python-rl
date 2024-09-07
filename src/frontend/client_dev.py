@@ -305,7 +305,7 @@ class OpenAILLMAgent(GameClient):
         super().__init__(player_id, uri)
         self.cash = 400
         self.inventory = {suit: 0 for suit in ["hearts", "diamonds", "clubs", "spades"]}
-        self.recent_updates = deque(maxlen=5)
+        self.recent_updates = deque(maxlen=30)
         self.instructions = instructions
 
         # Load OpenAI API key from .env file
@@ -319,9 +319,10 @@ class OpenAILLMAgent(GameClient):
 
         1. There are four suits: hearts, diamonds, clubs, and spades.
         2. One suit is secretly chosen as the goal suit, worth 10 points each at the end.
-        3. You start with 400 cash and a random distribution of cards. 50 cash is required to enter the game.
-        4. You can buy and sell cards by placing or accepting orders.
-        5. The game ends after a set time, and the player with the highest score (goal cards * 10 + cash) wins.
+        3. The goal suit is of the same color as the suit with the most cards in the deck.
+        4. You start with 400 cash and a random distribution of cards. 50 cash is required to enter the game.
+        5. You can buy and sell cards by placing or accepting orders.
+        6. The game ends after a set time, and the player with the highest score (goal cards * 10 + cash) wins.
 
         Your task is to {self.instructions}. You can place orders, accept orders, or wait for more information before making a decision. Good luck!
         """
@@ -441,51 +442,85 @@ class OpenAILLMAgent(GameClient):
             log_to_file(self.player_id, "Disconnected")
 
 
+import concurrent.futures
+
+
+class AgentPool:
+    def __init__(self, agent_class, num_workers, *args, **kwargs):
+        self.agent_class = agent_class
+        self.num_workers = num_workers
+        self.args = args
+        self.kwargs = kwargs
+        self.agents = []
+
+    async def start(self):
+        for i in range(self.num_workers):
+            agent = self.agent_class(*self.args, **self.kwargs)
+            self.agents.append(agent)
+            await agent.connect()
+
+    async def run(self):
+        tasks = [agent.receive_messages() for agent in self.agents]
+        await asyncio.gather(*tasks)
+
+
 async def main():
     base_uri = f"ws://localhost:8000/ws"
-    agents = [
-        AggressiveTrader("aggressive_trader", f"{base_uri}"),
-        SpeculativeAccumulator("speculative_accumulator", f"{base_uri}"),
-        MarketMaker("market_maker", f"{base_uri}"),
-        OpenAILLMAgent(
+    agent_pools = [
+        AgentPool(AggressiveTrader, 1, "aggressive_trader", f"{base_uri}"),
+        AgentPool(SpeculativeAccumulator, 1, "speculative_accumulator", f"{base_uri}"),
+        AgentPool(MarketMaker, 1, "market_maker", f"{base_uri}"),
+        AgentPool(
+            OpenAILLMAgent,
+            1,
             "openai_champion",
             f"{base_uri}",
             instructions="Guess and place smart orders to maximize profit and win the game",
         ),
-        # OpenAILLMAgent(
-        #     "openai_seller",
-        #     f"{base_uri}",
-        #     instructions="Aggressively Sell all cards, lower ask",
-        # ),
-        # OpenAILLMAgent(
-        #     "openai_buyer",
-        #     f"{base_uri}",
-        #     instructions="Aggressively buy all cards, bid high",
-        # ),
-        # OpenAILLMAgent(
-        #     "openai_mm",
-        #     f"{base_uri}",
-        #     instructions="Market Maker strategy to keep spread",
-        # ),
     ]
 
-    # Connect all agents
-    await asyncio.gather(*(agent.connect() for agent in agents))
+    # agent_pools = [
+    #     AggressiveTrader("aggressive_trader", f"{base_uri}"),
+    #     SpeculativeAccumulator("speculative_accumulator", f"{base_uri}"),
+    #     MarketMaker("market_maker", f"{base_uri}"),
+    #     OpenAILLMAgent(
+    #         "openai_champion",
+    #         f"{base_uri}",
+    #         instructions="Guess and place smart orders to maximize profit and win the game",
+    #     ),
+    #     # OpenAILLMAgent(
+    #     #     "openai_seller",
+    #     #     f"{base_uri}",
+    #     #     instructions="Aggressively Sell all cards, lower ask",
+    #     # ),
+    #     # OpenAILLMAgent(
+    #     #     "openai_buyer",
+    #     #     f"{base_uri}",
+    #     #     instructions="Aggressively buy all cards, bid high",
+    #     # ),
+    #     # OpenAILLMAgent(
+    #     #     "openai_mm",
+    #     #     f"{base_uri}",
+    #     #     instructions="Market Maker strategy to keep spread",
+    #     # ),
+    # ]
 
-    # Start receiving messages for all agents
-    receive_tasks = [asyncio.create_task(agent.receive_messages()) for agent in agents]
+    # Start all agent pools
+    await asyncio.gather(*(pool.start() for pool in agent_pools))
 
     # Wait for 2 seconds
     await asyncio.sleep(2)
 
     # Send ready signal for all agents
-    await asyncio.gather(*(agent.send_ready() for agent in agents))
+    await asyncio.gather(
+        *(agent.send_ready() for pool in agent_pools for agent in pool.agents)
+    )
 
-    # Wait for all receive tasks to complete
-    await asyncio.gather(*receive_tasks)
+    # Run all agent pools
+    await asyncio.gather(*(pool.run() for pool in agent_pools))
 
 
 if __name__ == "__main__":
-    # Remove the log folder
+    # Clear logs directory
     os.system("rm -rf player_logs")
     asyncio.run(main())

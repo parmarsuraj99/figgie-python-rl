@@ -1,6 +1,9 @@
 from .game_logic import Game, Order, Constants
 from typing import Dict, List, Union
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 
 class WebSocketGame(Game):
@@ -12,6 +15,7 @@ class WebSocketGame(Game):
     ):
         super().__init__(game_id, max_players, timer_max)
         self.connections: Dict[str, WebSocket] = {}
+        self.ui_connections: List[WebSocket] = []
         self.add_event_listener("player_added", self.on_player_added)
         self.add_event_listener("player_ready", self.on_player_ready)
         self.add_event_listener("game_started", self.on_game_started)
@@ -30,6 +34,17 @@ class WebSocketGame(Game):
     async def broadcast(self, message: Dict):
         for websocket in self.connections.values():
             await websocket.send_json(message)
+        for ui_websocket in self.ui_connections:
+            await ui_websocket.send_json(message)
+
+    async def handle_ui_connection(self, websocket: WebSocket):
+        await websocket.accept()
+        self.ui_connections.append(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            self.ui_connections.remove(websocket)
 
     async def handle_message(self, player_id: str, message: str, websocket: WebSocket):
 
