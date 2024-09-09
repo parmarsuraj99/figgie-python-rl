@@ -18,13 +18,13 @@ from fastapi.responses import HTMLResponse
 
 async def get_game_ui():
     with open("src/backend/static/game_ui.html", "r") as file:
-        return HTMLResponse(content=file.read(), status_code=200)
+        return file.read()  # Return the raw HTML content as a string
 
 
 def setup_routes(app: FastAPI, game: WebSocketGame):
     @app.get("/")
     async def get_ui():
-        return HTMLResponse(content=await get_game_ui(), status_code=200)
+        return HTMLResponse(content=await get_game_ui())  # Directly return HTMLResponse with the content
 
     @app.websocket("/ws/ui")
     async def websocket_ui_endpoint(websocket: WebSocket):
