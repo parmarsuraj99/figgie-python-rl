@@ -4,8 +4,8 @@ from pydantic import BaseModel
 
 
 class Constants:
-    timer_countdown = 60 * 2
-    update_interval = 1
+    timer_countdown = 60 * 2 # seconds
+    update_interval = 5 # seconds
     suits: List[str] = ["hearts", "diamonds", "clubs", "spades"]
     suit2colors: Dict[str, str] = {
         "hearts": "red",
