@@ -3,6 +3,8 @@ My implementation for Jane Street's Figgie in Python
 
 API inspired from: [https://github.com/CornellDataScience/FiggieBot](https://github.com/CornellDataScience/FiggieBot)
 
+A video walkthrough: [Youtube - Figgie Python RL | v1 | LLM agents | websockets](https://youtu.be/HxovFgGlyp4)
+
 ## Setting up
 
 1. Clone this repository: `git clone https://github.com/parmarsuraj99/figgie-python-rl` 
