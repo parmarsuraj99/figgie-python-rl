@@ -1,18 +1,18 @@
-from pydantic import BaseModel
 import asyncio
 import json
 import os
 import random
 from collections import deque
 from datetime import datetime
-from typing import Dict, List, Union, Literal, Optional
+from typing import Dict, List, Literal, Optional, Union
 
-import openai
 import anthropic
+import openai
 import websockets
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
-from clients.agents import GameClient, log_to_file
+from src.clients.agents import GameClient, log_to_file
 
 
 class Order(BaseModel):
@@ -40,9 +40,6 @@ class LLMAgent(GameClient):
         self.recent_updates = deque(maxlen=30)
         self.instructions = instructions
         self.llm_provider = llm_provider
-
-        # Load API keys from .env file
-        load_dotenv()
 
         if self.llm_provider == "openai":
             self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

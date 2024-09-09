@@ -4,11 +4,10 @@ import os
 import random
 from collections import deque
 from datetime import datetime
-from typing import Dict, List, Union, Literal, Optional
+from typing import Dict, List, Literal, Optional, Union
 
 import openai
 import websockets
-
 
 
 def log_to_file(player_id, message):

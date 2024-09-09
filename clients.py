@@ -1,20 +1,23 @@
 import asyncio
+import concurrent.futures
 import json
 import os
 import random
 from collections import deque
 from datetime import datetime
-from typing import Dict, List, Union, Literal, Optional
+from typing import Dict, List, Literal, Optional, Union
 
 import openai
 import websockets
 from dotenv import load_dotenv
 
-from clients.agents import GameClient, log_to_file
-from clients.agents import AggressiveTrader, SpeculativeAccumulator, MarketMaker
-from clients.llm_agents import LLMAgent
-
-import concurrent.futures
+from src.clients.agents import (
+    AggressiveTrader,
+    GameClient,
+    MarketMaker,
+    SpeculativeAccumulator,
+)
+from src.clients.llm_agents import LLMAgent
 
 
 class AgentPool:
@@ -41,13 +44,12 @@ async def main():
     agent_pools = [
         AgentPool(AggressiveTrader, 1, "aggressive_trader", f"{base_uri}"),
         AgentPool(SpeculativeAccumulator, 1, "speculative_accumulator", f"{base_uri}"),
-        # AgentPool(MarketMaker, 1, "market_maker", f"{base_uri}"),
         AgentPool(
             LLMAgent,
             1,
             "openai_champion",
             f"{base_uri}",
-            instructions="Guess and place smart orders to maximize profit and win the game",
+            instructions="Guess the goal suit and place smart orders to maximize profit and win the game with most profit",
             llm_provider="openai",
         ),
         AgentPool(
@@ -55,7 +57,7 @@ async def main():
             1,
             "claude_mm",
             f"{base_uri}",
-            instructions="Guess and place smart orders to act as a market maker",
+            instructions="Guess goal suit and place smart orders to act as a market maker, be aggressive",
             llm_provider="anthropic",
         ),
     ]
@@ -73,6 +75,10 @@ async def main():
 
 
 if __name__ == "__main__":
+
+    # Load environment variables
+    load_dotenv()
+
     # Clear logs directory
     os.system("rm -rf player_logs")
 
