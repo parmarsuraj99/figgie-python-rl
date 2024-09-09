@@ -35,7 +35,8 @@ class WebSocketGame(Game):
         for websocket in self.connections.values():
             await websocket.send_json(message)
         for ui_websocket in self.ui_connections:
-            await ui_websocket.send_json(message)
+            if message["type"] != "transaction_processed":
+                await ui_websocket.send_json(message)
 
     async def handle_ui_connection(self, websocket: WebSocket):
         await websocket.accept()
@@ -114,6 +115,6 @@ class WebSocketGame(Game):
         )
 
     async def on_transaction_processed(self, data: dict):
-        message = data["message"]
+        message = data
         # broadcast to all players
         await self.broadcast({"type": "transaction_processed", "data": message})

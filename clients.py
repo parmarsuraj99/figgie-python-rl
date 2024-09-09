@@ -44,6 +44,8 @@ async def main():
     agent_pools = [
         AgentPool(AggressiveTrader, 1, "aggressive_trader", f"{base_uri}"),
         AgentPool(SpeculativeAccumulator, 1, "speculative_accumulator", f"{base_uri}"),
+        # AgentPool(SpeculativeAccumulator, 1, "speculative_accumulator2", f"{base_uri}"),
+        # AgentPool(SpeculativeAccumulator, 1, "speculative_accumulator3", f"{base_uri}"),
         AgentPool(
             LLMAgent,
             1,
@@ -55,10 +57,10 @@ async def main():
         AgentPool(
             LLMAgent,
             1,
-            "claude_mm",
+            "openai_mm",
             f"{base_uri}",
             instructions="Guess goal suit and place smart orders to act as a market maker, be aggressive",
-            llm_provider="anthropic",
+            llm_provider="openai",  # Change to "anthropic" for Anthropic
         ),
     ]
 

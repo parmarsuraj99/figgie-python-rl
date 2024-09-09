@@ -59,4 +59,6 @@ if __name__ == "__main__":
         reload=True,
         log_level="info",
         workers=2,
+        ws_ping_interval=60,
+        ws_ping_timeout=30,
     )

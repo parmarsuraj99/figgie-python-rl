@@ -30,6 +30,8 @@ class Game:
         self.players: Dict[str, Player] = {}
         self.event_listeners: Dict[str, List[Callable]] = {}
         self.update_interval = update_interval
+        self.ping_interval = 60
+        self.pong_timeout = 30
 
     def get_goal_suit(self):
         goal_suit = random.choice(["hearts", "diamonds", "clubs", "spades"])
